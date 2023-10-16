@@ -14,5 +14,3 @@ class GetToken(KucoinBaseRestApi):
             uri = '/api/v1/bullet-private'
 
         return self._request('POST', uri, auth=is_private)
-
-
