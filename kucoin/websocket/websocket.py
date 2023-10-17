@@ -7,8 +7,13 @@ import websockets
 from random import random
 from uuid import uuid4
 
+from ..rate_limiter import async_rate_limiter as rate_limiter
+
 logger = logging.getLogger("main.websocket")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
+
+MSG_LIMIT = 100  # 100 per 10 seconds
+MSG_LIMIT_LOOKBACK = 10  # seconds
 
 
 class ConnectWebsocket:
@@ -146,8 +151,6 @@ class ConnectWebsocket:
             )
             await asyncio.sleep(reconnect_wait)
             logger.info("asyncio sleep: ok")
-        else:
-            self._just_started = False
 
         event = asyncio.Event()
 
@@ -161,6 +164,8 @@ class ConnectWebsocket:
 
         for task in tasks.keys():
             task.add_done_callback(exception_handler)
+
+        self._just_started = False
 
         while set(tasks.keys()):
             finished, pending = await asyncio.wait(
@@ -198,14 +203,17 @@ class ConnectWebsocket:
         logger.warning("_reconnect over.")
 
     async def _recover_topic_req_msg(self, event):
-        logger.info(f"recover topic event {self.topics} waiting")
+        if self._just_started:
+            return
+
         await event.wait()
-        logger.info(f"recover topic event {self.topics} done.")
-        for topic in self.topics:
+
+        for batch in self.topics.batched_topics_str:
+            logger.info(f"recover topic batch {batch} waiting")
             await self.send_message(
-                {"type": "subscribe", "topic": topic, "response": True}
+                {"type": "subscribe", "topic": batch, "response": True}
             )
-            logger.info(f"{topic} OK")
+            logger.info(f"{batch} OK")
 
     def _get_reconnect_wait(self, attempts):
         expo = 2**attempts
@@ -216,6 +224,7 @@ class ConnectWebsocket:
         await self._socket.send(json.dumps(msg))
         self._last_ping = time.time()
 
+    @rate_limiter(max_rate=MSG_LIMIT, time_window=MSG_LIMIT_LOOKBACK, send_immediately=False)
     async def send_message(self, msg, retry_count=0):
         if not self._socket:
             if retry_count < self.MAX_RECONNECTS:
@@ -224,9 +233,12 @@ class ConnectWebsocket:
         else:
             msg["id"] = str(int(time.time() * 1000))
             msg["privateChannel"] = self._private
+            logger.debug("sending message: %s", msg)
             await self._socket.send(json.dumps(msg))
 
 
+# --------------------------------------------------------------------------------------
+#                                    simple test
 async def test_callback(msg):
     logger.info(msg)
 
