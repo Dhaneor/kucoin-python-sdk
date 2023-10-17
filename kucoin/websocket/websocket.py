@@ -49,10 +49,8 @@ class ConnectWebsocket:
                 logger.debug(self._ws_details)
 
                 async with websockets.connect(
-                    self.get_ws_endpoint(),
-                    ssl=self.get_ws_encryption()
+                    self.get_ws_endpoint(), ssl=self.get_ws_encryption()
                 ) as socket:
-
                     self._socket = socket
                     self._reconnect_num = 0
 
@@ -147,7 +145,8 @@ class ConnectWebsocket:
             reconnect_wait = self._get_reconnect_wait(self._reconnect_num)
             logger.info(
                 "asyncio sleep reconnect_wait=%s s reconnect_num=%s",
-                reconnect_wait, self._reconnect_num
+                reconnect_wait,
+                self._reconnect_num,
             )
             await asyncio.sleep(reconnect_wait)
             logger.info("asyncio sleep: ok")
@@ -169,8 +168,7 @@ class ConnectWebsocket:
 
         while set(tasks.keys()):
             finished, pending = await asyncio.wait(
-                tasks.keys(),
-                return_when=asyncio.FIRST_EXCEPTION
+                tasks.keys(), return_when=asyncio.FIRST_EXCEPTION
             )
 
             if self._shutdown_flag:  # New shutdown flag
@@ -224,7 +222,9 @@ class ConnectWebsocket:
         await self._socket.send(json.dumps(msg))
         self._last_ping = time.time()
 
-    @rate_limiter(max_rate=MSG_LIMIT, time_window=MSG_LIMIT_LOOKBACK, send_immediately=False)
+    @rate_limiter(
+        max_rate=MSG_LIMIT, time_window=MSG_LIMIT_LOOKBACK, send_immediately=False
+    )
     async def send_message(self, msg, retry_count=0):
         if not self._socket:
             if retry_count < self.MAX_RECONNECTS:
@@ -249,7 +249,7 @@ async def main():
     ws = ConnectWebsocket(loop=loop, client=client, callback=test_callback)
 
     topic = "/market/ticker:XDC-BTC"
-    sub_msg = {'type': 'subscribe', 'topic': topic, 'response': True}
+    sub_msg = {"type": "subscribe", "topic": topic, "response": True}
 
     await ws.send_message(sub_msg)
     ws._topics.append(topic)
@@ -266,6 +266,7 @@ async def main():
 
 if __name__ == "__main__":
     from kucoin.client import WsToken
+
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
