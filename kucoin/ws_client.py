@@ -11,7 +11,7 @@ logger = logging.getLogger("main.ws_client")
 logger.setLevel(logging.DEBUG)
 
 
-def batch_topics(self, topics: list[str]) -> list[list[str]]:
+def batch_topics(topics: list[str]) -> list[list[str]]:
     """Create a list of batched/chunked topics.
 
     Parameters
@@ -31,7 +31,7 @@ def batch_topics(self, topics: list[str]) -> list[list[str]]:
     ]
 
 
-def batch_topics_str(self, topics: list[str]) -> list[str]:
+def batch_topics_str(topics: list[str]) -> list[str]:
     """Create a list of batched/chunked topics.
 
     Parameters
@@ -70,7 +70,7 @@ def batch_topics_str(self, topics: list[str]) -> list[str]:
     ]
 
 
-def as_list(self, topic: str) -> list[str]:
+def as_list(topic: str) -> list[str]:
     """Turns a concatenated topic string into a list of single topics.
 
     Parameters
@@ -163,28 +163,34 @@ class Topics:
             - one list of single-topic strings that would exceed the
             limit of MAX_TOPICS_PER_CLIENT
         """
-        single_topics = as_list(req)
-
         # handle topics with existing subcribers
-        for topic in tuple(single_topics):
+        for topic in tuple(topics := as_list(req)):
             if topic in self._topics:
                 await self.add_subscriber(topic)
-                single_topics.remove(topic)
+                # can be removed from request as we already have it
+                topics.remove(topic)
 
-        topics_left = MAX_TOPICS_PER_CLIENT - self.unique_topics_count
+        # see how much capacity this client has left
+        capacity = MAX_TOPICS_PER_CLIENT - self.unique_topics_count
 
-        return (
-            self.batch_topics_str(single_topics[:topics_left]),
-            single_topics[topics_left:]
-        )
+        return batch_topics_str(topics[:capacity]), topics[capacity:]
 
     async def process_unsubscribe(self, req: str) -> tuple[list[str], list[str]]:
-        single_topics = self.as_list(req)
+        """Processes an unsubscribe request.
 
-        # handle topics with existing subcribers
-        single_topics = [t for t in single_topics if await self.remove_subscriber(t)]
+        Parameters
+        ----------
+        req : str
+            the unsubscribe request
 
-        return batch_topics_str(single_topics) if single_topics else []
+        Returns
+        -------
+        list[str]
+            A list of batched topic strings, for all topics that can be unsubscribed.
+        """
+        return batch_topics_str(
+            [t for t in as_list(req) if await self.remove_subscriber(t)]
+        )
 
     async def add_subscriber(self, topic: str) -> bool:
         """Adds a subscriber for a topic.
@@ -201,13 +207,12 @@ class Topics:
         """
         self._topics.append(topic)
 
-        subs = await self.subscribers(topic)
-        if subs == 1:
-            logger.info("created new topic: %s", topic)
+        if (subs := self._topics.count(topic)) == 1:
+            logger.info("created new topic: %s" % topic)
+            return True
         else:
             logger.info("increased subscriber count for %s to: %s", topic, subs)
-
-        return True if self._topics.count(topic) == 1 else False
+            return False
 
     async def remove_subscriber(self, topic: str) -> int:
         """Removes a subscriber for a topic.
@@ -226,93 +231,13 @@ class Topics:
             self.topics.remove(topic)
         except ValueError:
             logger.warning("unable to remove topic: %s --> not found" % topic)
-            return False
         else:
-            subs = await self.subscribers(topic)
-            if subs:
+            if (subs := self._topics.count(topic)):
                 logger.info("decreased subscriber count for %s to: %s", topic, subs)
+                return True
             else:
                 logger.info("no more subscribers, topic removed: %s", topic)
-
-        return True if topic not in self._topics else False
-
-    async def add_batch(self, batch: str) -> None:
-        """Adds a batch of topics.
-
-        Parameters
-        ----------
-        batch : str
-            the batch of topics
-        """
-        [await self.add_subscriber(t) for t in as_list(batch)]
-
-    async def remove_batch(self, batch: str) -> None:
-        """Removes a batch of topics.
-
-        Parameters
-        ----------
-        batch : str
-            the batch of topics
-        """
-        [await self.remove_subscriber(t) for t in self.as_list(batch)]
-
-    async def subscribers(self, topic: str) -> int:
-        """Returns the number of subscribers for a topic."""
-        return self._topics.count(topic)
-
-    async def remove_topic(self, topic: str) -> None:
-        """Removes a topic.
-
-        Parameters
-        ----------
-        topic : str
-            the topic
-        """
-        try:
-            while topic in self._topics:
-                self.topics.remove(topic)
-        except ValueError:
-            logger.warning("unable to remove topic: %s --> not found" % topic)
-        else:
-            logger.info("removed topic: %s", topic)
-
-    # ..................................................................................
-    def batch_topics(self, topics: list[str]) -> list[list[str]]:
-        return [
-            topics[i: i + MAX_BATCH_SUBSCRIPTIONS]
-            for i in range(0, len(topics), MAX_BATCH_SUBSCRIPTIONS)
-        ]
-
-    def batch_topics_str(self, topics: list[str]) -> list[str]:
-        if not topics:
-            return []
-
-        logger.debug("Batch topics got: %s", topics)
-
-        subject = topics[0].split(':')[0]
-
-        try:
-            stripped_subject = tuple(
-                sorted(
-                    [t.split(':')[1] for t in (topics)]
-                )
-            )
-        except IndexError:
-            logger.error("unable to create batched topic string. forgot the subject?")
-            logger.error("topics: %s", [t for t in topics if ":" not in t])
-            return []
-
-        return [
-            f"{subject}:{(',').join(stripped_subject[i: i + MAX_BATCH_SUBSCRIPTIONS])}"
-            for i in range(0, len(topics), MAX_BATCH_SUBSCRIPTIONS)
-        ]
-
-    def as_list(self, topic: str) -> list:
-        if "," not in topic:
-            return [topic]
-
-        subject, topics_str = topic.split(":")[:2]
-        return [f"{subject}:{t}" for t in topics_str.split(",")]
+                return False
 
 
 class KucoinWsClient:
@@ -373,8 +298,7 @@ class KucoinWsClient:
             logger.info("SUBSCRIBING TO topic: %s", batch)
             req_msg["topic"] = batch
             await self._conn.send_message(req_msg)
-            for t in as_list(batch):
-                await self._topics.add_subscriber(t)
+            [await self._topics.add_subscriber(t) for t in as_list(batch)]
 
         return exceeds_topic_limit
 
