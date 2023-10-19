@@ -42,7 +42,7 @@ def batch_topics_str(topics: list[str]) -> list[str]:
     Returns
     -------
     list[str]
-        A list of concatenated topic strings, suitable for batch requests.
+        A list of concatenated topic strings, for batch requests.
         the maximum number of topics per string is defined by
         MAX_BATCH_SUBSCRIPTIONS.
     """
@@ -51,14 +51,10 @@ def batch_topics_str(topics: list[str]) -> list[str]:
 
     logger.debug("Batch topics got: %s", topics)
 
-    subject = topics[0].split(':')[0]
+    subject = topics[0].split(":")[0]
 
     try:
-        stripped_subject = tuple(
-            sorted(
-                [t.split(':')[1] for t in (topics)]
-            )
-        )
+        stripped_subject = tuple(sorted([t.split(":")[1] for t in (topics)]))
     except IndexError:
         logger.error("unable to create batched topic string. forgot the subject?")
         logger.error("topics: %s", [t for t in topics if ":" not in t])
@@ -228,20 +224,23 @@ class Topics:
             True if this was the last subscriber for the topic, False otherwise.
         """
         try:
-            self.topics.remove(topic)
+            self._topics.remove(topic)
         except ValueError:
             logger.warning("unable to remove topic: %s --> not found" % topic)
+            can_be_unsubbed = False
         else:
-            if (subs := self._topics.count(topic)):
+            if subs := self._topics.count(topic):
                 logger.info("decreased subscriber count for %s to: %s", topic, subs)
-                return True
+                can_be_unsubbed = False
             else:
                 logger.info("no more subscribers, topic removed: %s", topic)
-                return False
+                can_be_unsubbed = True
+        finally:
+            return can_be_unsubbed
 
 
 class KucoinWsClient:
-    """ https://docs.kucoin.com/#websocket-feed """
+    """https://docs.kucoin.com/#websocket-feed"""
 
     def __init__(self):
         self._callback = None
@@ -266,30 +265,34 @@ class KucoinWsClient:
 
     @property
     def topics(self) -> list:
-        return self._conn.unique_topics
+        return self._topics.unique_topics
 
-    async def _recv(self, msg):
-        if msg.get('type') == 'error':
+    @property
+    def topics_left(self) -> int:
+        return MAX_TOPICS_PER_CLIENT - self._topics.unique_topics_count
+
+    async def _recv(self, msg: dict) -> None:
+        if msg.get("type") == "error":
             logger.error("subscription error: %s" % msg)
             await self._callback(msg)
-        elif 'data' in msg:
+        elif "data" in msg:
             await self._callback(msg)
-        elif msg.get('type') == 'ack':
+        elif msg.get("type") == "ack":
             logger.debug("subscription acknowledged: %s" % msg)
-        elif msg.get('type') == 'welcome':
-            logger.debug("websocket connection established: OK")
-        elif msg.get('type') == 'pong':
+        elif msg.get("type") == "welcome":
+            logger.info("websocket connection established: OK")
+        elif msg.get("type") == "pong":
             pass
         else:
             logger.warning("unknown message type: %s" % msg)
 
-    async def subscribe(self, topic):
+    async def subscribe(self, topic: str) -> None:
         """Subscribe to a channel
         :param topic: required
         :type topic: str
         :returns: None
         """
-        req_msg = {'type': 'subscribe', 'topic': None, 'response': True}
+        req_msg = {"type": "subscribe", "topic": None, "response": True}
         to_subscribe, exceeds_topic_limit = await self._topics.process_subscribe(topic)
 
         logger.debug("got batched topics to subscribe: %s" % to_subscribe)
@@ -302,15 +305,19 @@ class KucoinWsClient:
 
         return exceeds_topic_limit
 
-    async def unsubscribe(self, topic):
+    async def unsubscribe(self, topic: str) -> None:
         """Unsubscribe from a topic
 
         :param topic: required
         :type topic: str
         :returns: None
         """
-        req_msg = {'type': 'unsubscribe', 'topic': topic, 'response': True}
+        logger.debug(" ... processing unsubscribe request")
+        req_msg = {"type": "unsubscribe", "topic": None, "response": True}
         for batch in await self._topics.process_unsubscribe(topic):
             logger.info("unsubscribing from topic: %s", batch)
-            req_msg[topic] = batch
+            req_msg["topic"] = batch
             await self._conn.send_message(req_msg)
+
+    async def close(self):
+        asyncio.create_task(self._conn.close())

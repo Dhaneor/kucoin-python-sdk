@@ -10,7 +10,7 @@ from uuid import uuid4
 from ..rate_limiter import async_rate_limiter as rate_limiter
 
 logger = logging.getLogger("main.websocket")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 MSG_LIMIT = 100  # 100 per 10 seconds
 MSG_LIMIT_LOOKBACK = 10  # seconds
@@ -32,8 +32,7 @@ class ConnectWebsocket:
         self._socket = None
         self._topics = []
         self._just_started = True
-        self._shutdown_flag = False
-        asyncio.ensure_future(self.run_forever(), loop=self._loop)
+        self._task = asyncio.create_task(self.run_forever())
 
     @property
     def topics(self):
@@ -73,7 +72,7 @@ class ConnectWebsocket:
                             break  # Break the inner loop to trigger reconnection
                         except asyncio.CancelledError:
                             logger.info("cancelled ... initiating shutdown")
-                            self._shutdown_flag = True
+                            # self._shutdown_flag = True
                             keep_alive, should_reconnect = False, False
                             await self._socket.ping()
                         else:
@@ -85,17 +84,28 @@ class ConnectWebsocket:
                                 await self._callback(msg)
 
             except websockets.ConnectionClosed as e:
-                if not self._shutdown_flag:
-                    logger.warning(f"websocket connection closed (outer): {e}")
+                logger.warning(f"websocket connection closed (outer): {e}")
             except Exception as e:
-                logger.error(f"an unexpected error occurred: {e}", exc_info=1)
+                logger.error(f"an unexpected error occurred: {e}", exc_info=0)
 
             # Check if reconnection is needed
             if keep_alive and should_reconnect:
-                logger.info("websocket closed --> reconnect: %s", should_reconnect)
+                logger.debug("connection closed --> reconnect: %s", should_reconnect)
                 await self._reconnect()
             else:
-                logger.info("websocket closed --> reconnect: %s", should_reconnect)
+                logger.debug("connection closed --> reconnect: %s", should_reconnect)
+
+    async def close(self):
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        logger.info(
+            "websocket connection terminated: %s",
+            "OK" if self._task.done() else "NOPE!"
+        )
 
     def get_ws_endpoint(self):
         if not self._ws_details:
@@ -119,7 +129,10 @@ class ConnectWebsocket:
 
     async def run_forever(self):
         while True:
-            await self._reconnect()
+            try:
+                await self._reconnect()
+            except asyncio.CancelledError:
+                break
 
     async def _reconnect(self):
         # exception handler for tasks
@@ -130,7 +143,7 @@ class ConnectWebsocket:
                 if exception := task.exception():
                     logger.warning("task %s EXCEPTION: %s", name, exception)
                 else:
-                    logger.info("task %s DONE: %s", name, task.done())
+                    logger.debug("task %s DONE: %s", name, task.done())
             except asyncio.CancelledError:
                 logger.debug("task %s cancelled: %s", name, task.cancelled())
                 logger.debug("task %s DONE: %s", name, task.done())
@@ -149,7 +162,7 @@ class ConnectWebsocket:
                 self._reconnect_num,
             )
             await asyncio.sleep(reconnect_wait)
-            logger.info("asyncio sleep: ok")
+            logger.debug("asyncio sleep: ok")
 
         event = asyncio.Event()
 
@@ -167,36 +180,39 @@ class ConnectWebsocket:
         self._just_started = False
 
         while set(tasks.keys()):
-            finished, pending = await asyncio.wait(
-                tasks.keys(), return_when=asyncio.FIRST_EXCEPTION
-            )
+            try:
+                finished, pending = await asyncio.wait(
+                    tasks.keys(), return_when=asyncio.FIRST_EXCEPTION
+                )
 
-            if self._shutdown_flag:  # New shutdown flag
-                logger.info("Shutdown flag active, cancelling all pending tasks ...")
-                for pt in pending:
-                    pt.cancel()
+                exception_occur = False
 
-                await asyncio.gather(list(tasks.keys()))
-                break
+                for task in finished:
+                    if task.exception():
+                        exception_occur = True
+                        logger.warning(
+                            f"{task.get_name()} got an exception {task.exception()}"
+                        )
+                        for pt in pending:
+                            logger.warning(f"pending {pt.get_name()}")
+                            try:
+                                pt.cancel()
+                            except asyncio.CancelledError:
+                                logger.exception("CancelledError ")
+                            logger.warning("cancel ok.")
 
-            exception_occur = False
-
-            for task in finished:
-                if task.exception():
-                    exception_occur = True
-                    logger.warning(
-                        f"{task.get_name()} got an exception {task.exception()}"
-                    )
-                    for pt in pending:
-                        logger.warning(f"pending {pt.get_name()}")
-                        try:
-                            pt.cancel()
-                        except asyncio.CancelledError:
-                            logger.exception("CancelledError ")
-                        logger.warning("cancel ok.")
-
-            if exception_occur:
-                break
+                if exception_occur:
+                    break
+            except asyncio.CancelledError:
+                # make sure there are no abandoned tasks after cancel,
+                # only important if the websocket client is closed and
+                # the main application keeps running (= dynamic connection
+                # management)
+                for task in (tasks := list(tasks.keys())):
+                    task.cancel()
+                await asyncio.gather(*tasks)
+                # raise asyncio.CancelledError()
+                return
 
         logger.warning("_reconnect over.")
 
