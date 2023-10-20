@@ -32,6 +32,7 @@ class ConnectWebsocket:
         self._socket = None
         self._topics = []
         self._just_started = True
+        self._shutdown_flag = False
         self._task = asyncio.create_task(self.run_forever())
 
     @property
@@ -72,8 +73,8 @@ class ConnectWebsocket:
                             break  # Break the inner loop to trigger reconnection
                         except asyncio.CancelledError:
                             logger.info("cancelled ... initiating shutdown")
-                            # self._shutdown_flag = True
                             keep_alive, should_reconnect = False, False
+                            self._shutdown_flag = True
                             await self._socket.ping()
                         else:
                             try:
@@ -84,7 +85,8 @@ class ConnectWebsocket:
                                 await self._callback(msg)
 
             except websockets.ConnectionClosed as e:
-                logger.warning(f"websocket connection closed (outer): {e}")
+                if not self._shutdown_flag:
+                    logger.warning(f"websocket connection closed (outer): {e}")
             except Exception as e:
                 logger.error(f"an unexpected error occurred: {e}", exc_info=0)
 
@@ -211,8 +213,7 @@ class ConnectWebsocket:
                 for task in (tasks := list(tasks.keys())):
                     task.cancel()
                 await asyncio.gather(*tasks)
-                # raise asyncio.CancelledError()
-                return
+                raise asyncio.CancelledError()
 
         logger.warning("_reconnect over.")
 
@@ -235,7 +236,10 @@ class ConnectWebsocket:
 
     async def send_ping(self):
         msg = {"id": str(int(time.time() * 1000)), "type": "ping"}
-        await self._socket.send(json.dumps(msg))
+        try:
+            await self._socket.send(json.dumps(msg))
+        except websockets.ConnectionClosed as e:
+            logger.warning(f"unable to send PING, connection closed: {e}")
         self._last_ping = time.time()
 
     @rate_limiter(
@@ -250,7 +254,10 @@ class ConnectWebsocket:
             msg["id"] = str(int(time.time() * 1000))
             msg["privateChannel"] = self._private
             logger.debug("sending message: %s", msg)
-            await self._socket.send(json.dumps(msg))
+            try:
+                await self._socket.send(json.dumps(msg))
+            except websockets.ConnectionClosed as e:
+                logger.warning(f"unable to send message, connection closed: {e}")
 
 
 # --------------------------------------------------------------------------------------

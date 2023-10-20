@@ -315,7 +315,7 @@ class KucoinWsClient:
         logger.debug(" ... processing unsubscribe request")
         req_msg = {"type": "unsubscribe", "topic": None, "response": True}
         for batch in await self._topics.process_unsubscribe(topic):
-            logger.info("unsubscribing from topic: %s", batch)
+            logger.info("UNSUBSCRIIBNG from topic: %s", batch)
             req_msg["topic"] = batch
             await self._conn.send_message(req_msg)
 
