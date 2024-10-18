@@ -5,7 +5,7 @@ from typing import Optional, Iterator
 from .websocket.websocket import ConnectWebsocket
 
 MAX_BATCH_SUBSCRIPTIONS = 100  # 100 - max number of topics in a single request
-MAX_TOPICS_PER_CLIENT = 300  # max number of topics for a single client/instance
+MAX_TOPICS_PER_CLIENT = 300  # max number of topics for one client/instance
 
 logger = logging.getLogger("main.ws_client")
 logger.setLevel(logging.DEBUG)
@@ -56,12 +56,14 @@ def batch_topics_str(topics: list[str]) -> list[str]:
     try:
         stripped_subject = tuple(sorted([t.split(":")[1] for t in (topics)]))
     except IndexError:
-        logger.error("unable to create batched topic string. forgot the subject?")
+        logger.error(
+            "unable to create batched topic string. forgot the subject?"
+            )
         logger.error("topics: %s", [t for t in topics if ":" not in t])
         return []
 
     return [
-        f"{subject}:{(',').join(stripped_subject[i: i + MAX_BATCH_SUBSCRIPTIONS])}"
+        f"{subject}:{(',').join(stripped_subject[i: i + MAX_BATCH_SUBSCRIPTIONS])}"  # noqa: E501
         for i in range(0, len(topics), MAX_BATCH_SUBSCRIPTIONS)
     ]
 
@@ -87,7 +89,7 @@ def as_list(topic: str) -> list[str]:
 
 
 class Topics:
-    """Helper class to keep track of the number of subscribers for each topic."""
+    """Helper to keep track of the number of subscribers for each topic."""
 
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         self.logger = logger or logging.getLogger(__name__)
@@ -171,7 +173,10 @@ class Topics:
 
         return batch_topics_str(topics[:capacity]), topics[capacity:]
 
-    async def process_unsubscribe(self, req: str) -> tuple[list[str], list[str]]:
+    async def process_unsubscribe(
+        self,
+        req: str
+    ) -> tuple[list[str], list[str]]:
         """Processes an unsubscribe request.
 
         Parameters
@@ -182,7 +187,8 @@ class Topics:
         Returns
         -------
         list[str]
-            A list of batched topic strings, for all topics that can be unsubscribed.
+            A List of batched topic strings,
+            for all topics that can be unsubscribed.
         """
         return batch_topics_str(
             [t for t in as_list(req) if await self.remove_subscriber(t)]
@@ -199,7 +205,7 @@ class Topics:
         Returns
         -------
         bool
-            True if this is the first subscriber for the topic, False otherwise.
+            True if this is the first subscriber for the topic
         """
         self._topics.append(topic)
 
@@ -207,7 +213,11 @@ class Topics:
             logger.info("created new topic: %s" % topic)
             return True
         else:
-            logger.info("increased subscriber count for %s to: %s", topic, subs)
+            logger.info(
+                "increased subscriber count for %s to: %s",
+                topic,
+                subs
+                )
             return False
 
     async def remove_subscriber(self, topic: str) -> int:
@@ -221,7 +231,7 @@ class Topics:
         Returns
         -------
         bool
-            True if this was the last subscriber for the topic, False otherwise.
+            True if this was the last subscriber for the topic
         """
         try:
             self._topics.remove(topic)
@@ -230,7 +240,9 @@ class Topics:
             can_be_unsubbed = False
         else:
             if subs := self._topics.count(topic):
-                logger.info("decreased subscriber count for %s to: %s", topic, subs)
+                logger.info(
+                    "decreased subscriber count for %s to: %s", topic, subs
+                )
                 can_be_unsubbed = False
             else:
                 logger.info("no more subscribers, topic removed: %s", topic)
@@ -293,7 +305,8 @@ class KucoinWsClient:
         :returns: None
         """
         req_msg = {"type": "subscribe", "topic": None, "response": True}
-        to_subscribe, exceeds_topic_limit = await self._topics.process_subscribe(topic)
+        to_subscribe, exceeds_topic_limit = \
+            await self._topics.process_subscribe(topic)
 
         logger.debug("got batched topics to subscribe: %s" % to_subscribe)
 
