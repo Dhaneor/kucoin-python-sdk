@@ -1,5 +1,5 @@
 import warnings
-from kucoin.base_request.base_request import KucoinBaseRestApi
+from ..base_request.base_request import KucoinBaseRestApi
 
 
 class MarketData(KucoinBaseRestApi):
@@ -389,7 +389,7 @@ class MarketData(KucoinBaseRestApi):
         if chain:
             params['chain'] = chain
         return self._request('GET', '/api/v1/currencies/{currency}'.format(currency=currency), params=params)
-    
+
     def get_currency_detail_v2(self, currency, chain=None):
         """
         https://docs.kucoin.com/#get-currency-detail-recommend
@@ -451,7 +451,7 @@ class MarketData(KucoinBaseRestApi):
         if chain:
             params['chain'] = chain
         return self._request('GET', '/api/v2/currencies/{currency}'.format(currency=currency), params=params)
-    
+
 
     def get_fiat_price(self, **kwargs):
         """

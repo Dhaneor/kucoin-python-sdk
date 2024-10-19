@@ -1,4 +1,4 @@
-from kucoin.base_request.base_request import KucoinBaseRestApi
+from ..base_request.base_request import KucoinBaseRestApi
 
 
 class TradeData(KucoinBaseRestApi):

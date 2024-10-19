@@ -1,4 +1,4 @@
-from kucoin.base_request.base_request import KucoinBaseRestApi
+from ..base_request.base_request import KucoinBaseRestApi
 
 
 class MarginData(KucoinBaseRestApi):
@@ -423,7 +423,7 @@ class MarginData(KucoinBaseRestApi):
             'currency': currency
         }
         return self._request('GET', '/api/v1/margin/trade/last', params=params)
-    
+
     def get_margin_risk_limit(self, marginModel='cross'):
         """
         https://docs.kucoin.com/#margin-trade-data
